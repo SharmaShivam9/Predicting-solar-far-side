@@ -1,5 +1,6 @@
 if __name__ == '__main__':
     import torch
+    import torch.nn as nn
     from torch.utils.data import DataLoader
     from networks import Discriminator, Generator, Loss
     from options import TrainOption
@@ -16,8 +17,11 @@ if __name__ == '__main__':
 
     opt = TrainOption().parse()
     os.environ['CUDA_VISIBLE_DEVICES'] = str(opt.gpu_ids)
-    device = torch.device('cuda:0')
-    dtype = torch.float16 if opt.data_type == 16 else torch.float32
+    n_gpus = torch.cuda.device_count()
+    device = torch.device("cuda" if n_gpus > 0 else "cpu")
+    dtype = torch.float32
+    def get_state_dict(model):
+        return model.module.state_dict() if hasattr(model, "module") else model.state_dict()
 
     if opt.val_during_train:
         from options import TestOption
@@ -80,8 +84,17 @@ if __name__ == '__main__':
                              num_workers=opt.n_workers,
                              shuffle=not opt.no_shuffle)
 
-    G = Generator(opt).apply(weights_init).to(device=device)
-    D = Discriminator(opt).apply(weights_init).to(device=device)
+    G = Generator(opt).apply(weights_init)
+    D = Discriminator(opt).apply(weights_init)
+
+    if n_gpus > 1:
+        print(f"Using {n_gpus} GPUs with DataParallel")
+        G = nn.DataParallel(G)
+        D = nn.DataParallel(D)
+
+# move to GPU(s)
+        G = G.to(device)
+        D = D.to(device)
 
     criterion = Loss(opt)
 
@@ -192,8 +205,8 @@ if __name__ == '__main__':
                            'total_step': total_step,
                            'D_loss': D_loss.detach().item(), 
                            'G_loss': G_loss.detach().item(),
-                           'D_state_dict': D.state_dict(),
-                           'G_state_dict': G.state_dict(),
+                           'G_state_dict': get_state_dict(G),
+                           'D_state_dict': get_state_dict(D),
                            'D_optim_state_dict': D_optim.state_dict(),
                            'G_optim_state_dict': G_optim.state_dict(),
                            'G_scheduler_state_dict': G_scheduler.state_dict(),

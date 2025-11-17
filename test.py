@@ -9,13 +9,15 @@ if __name__ == '__main__':
     from torch.utils.data import DataLoader
     from tqdm import tqdm
     from astropy.io import fits
+    import torch.nn as nn
 
     torch.backends.cudnn.benchmark = True
     
     opt = TestOption().parse()
     os.environ['CUDA_VISIBLE_DEVICES'] = str(opt.gpu_ids)
-    device = torch.device('cuda:0')
-    dtype = torch.float16 if opt.data_type == 16 else torch.float32
+    n_gpus = torch.cuda.device_count()
+    device = torch.device("cuda" if n_gpus > 0 else "cpu")
+    dtype = torch.float32
     STD = opt.dataset_name
 
     dataset = CustomDataset(opt)
@@ -51,8 +53,12 @@ if __name__ == '__main__':
         # CHANGED: Load using map_location=device and expecting the dictionary structure
         pt_file = torch.load(path_model, map_location=device) 
         
-        G = Generator(opt).to(device, dtype=dtype)
-        # CHANGED: Load 'G_state_dict' from the full checkpoint dictionary
+        G = Generator(opt)
+        if torch.cuda.device_count() > 1:
+            print("Using multi-GPU for inference")
+            G = nn.DataParallel(G)
+
+        G = G.to(device, dtype=dtype)
         G.load_state_dict(pt_file['G_state_dict']) 
         
         manager = Manager(opt)
