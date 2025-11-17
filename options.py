@@ -28,7 +28,7 @@ class BaseOption(object):
         self.parser.add_argument('--saturation_upper_limit_target', type=float, default=3000, help="Saturation value (upper limit) of target")
 
         # data augmentation
-        self.parser.add_argument('--batch_size', type=int, default=4, help='the number of batch_size')
+        self.parser.add_argument('--batch_size', type=int, default=8, help='the number of batch_size')
         self.parser.add_argument('--data_root', type=str, default='./datasets', help='Root directory where dataset subfolders are located')
         self.parser.add_argument('--dataset_name', type=str, default='AIA_to_HMI', help='dataset directory name')
         self.parser.add_argument('--data_type', type=int, default=32, help='float dtype')
