@@ -16,7 +16,7 @@ if __name__ == '__main__':
     torch.backends.cudnn.benchmark = True
 
     opt = TrainOption().parse()
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(opt.gpu_ids)
+    # os.environ['CUDA_VISIBLE_DEVICES'] = str(opt.gpu_ids)
     n_gpus = torch.cuda.device_count()
     device = torch.device("cuda" if n_gpus > 0 else "cpu")
     dtype = torch.float32
@@ -93,8 +93,8 @@ if __name__ == '__main__':
         D = nn.DataParallel(D)
 
 # move to GPU(s)
-        G = G.to(device=device, dtype=torch.float32)
-        D = D.to(device=device, dtype=torch.float32)
+    G = G.to(device=device, dtype=torch.float32)
+    D = D.to(device=device, dtype=torch.float32)
 
     criterion = Loss(opt)
 
