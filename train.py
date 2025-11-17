@@ -93,8 +93,8 @@ if __name__ == '__main__':
         D = nn.DataParallel(D)
 
 # move to GPU(s)
-        G = G.to(device)
-        D = D.to(device)
+        G = G.to(device=device, dtype=torch.float32)
+        D = D.to(device=device, dtype=torch.float32)
 
     criterion = Loss(opt)
 
