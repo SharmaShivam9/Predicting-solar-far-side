@@ -28,21 +28,21 @@ class BaseOption(object):
         self.parser.add_argument('--saturation_upper_limit_target', type=float, default=3000, help="Saturation value (upper limit) of target")
 
         # data augmentation
-        self.parser.add_argument('--batch_size', type=int, default=8, help='the number of batch_size')
+        self.parser.add_argument('--batch_size', type=int, default=4, help='the number of batch_size')
         self.parser.add_argument('--data_root', type=str, default='./datasets', help='Root directory where dataset subfolders are located')
         self.parser.add_argument('--dataset_name', type=str, default='AIA_to_HMI', help='dataset directory name')
         self.parser.add_argument('--data_type', type=int, default=32, help='float dtype')
         self.parser.add_argument('--image_mode', type=str, default='png', help='extension for saving image')
         self.parser.add_argument('--n_downsample', type=int, default=4, help='how many times you want to downsample input data in G')
         self.parser.add_argument('--n_residual', type=int, default=9, help='the number of residual blocks in G')
-        self.parser.add_argument('--n_workers', type=int, default=16, help='how many threads you want to use')
+        self.parser.add_argument('--n_workers', type=int, default=4, help='how many threads you want to use')
         self.parser.add_argument('--norm_type', type=str, default='InstanceNorm2d', help='[BatchNorm2d, InstanceNorm2d]')
         self.parser.add_argument('--padding_type', type=str, default='reflection', help='[reflection, replication, zero]')
         self.parser.add_argument('--padding_size', type=int, default=0, help='padding size')
         self.parser.add_argument('--max_rotation_angle', type=int, default=0, help='rotation angle in degrees')
         self.parser.add_argument('--val_during_train', action='store_true', default=True)
 
-        self.parser.add_argument('--report_freq', type=int, default=20)
+        self.parser.add_argument('--report_freq', type=int, default=40)
         self.parser.add_argument('--save_freq', type=int, default=2000)
         self.parser.add_argument('--display_freq', type=int, default=100)
         
