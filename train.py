@@ -57,48 +57,46 @@ if __name__ == '__main__':
         test_dataset = CustomDataset(test_opt, mode='Test')
         
 
-        test_sampler = DistributedSampler(test_dataset, num_replicas=world_size, rank=rank, shuffle=False)
-
-        test_data_loader = DataLoader(
-            dataset=test_dataset,
-            batch_size=test_opt.batch_size,
-            num_workers=opt.n_workers,
-            sampler=test_sampler,
-            pin_memory=True,
-            persistent_workers=True)
+        if is_master:
+            test_data_loader = DataLoader(
+                dataset=test_dataset,
+                batch_size=test_opt.batch_size,
+                num_workers=opt.n_workers,
+                shuffle=False,
+                pin_memory=True,
+                persistent_workers=True)
+        else:
+            test_data_loader = None
 
         
         # --- 2. SETUP Track_Train ---
-        print("Setting up Track_Train dataloader...")
+        print("Setting up Track_Train and Track_Test dataloader...")
         track_train_dataset = CustomDataset(test_opt, mode='Track_Train')
-        track_train_sampler = DistributedSampler(
-    track_train_dataset, num_replicas=world_size, rank=rank, shuffle=False
-)
-
-        track_train_loader = DataLoader(
-    dataset=track_train_dataset,
-    batch_size=1,
-    num_workers=opt.n_workers,
-    sampler=track_train_sampler,
-    pin_memory=True,
-    persistent_workers=True
-)
-
-        # --- 3. SETUP Track_Test ---
-        print("Setting up Track_Test dataloader...")
         track_test_dataset = CustomDataset(test_opt, mode='Track_Test')
-        track_test_sampler = DistributedSampler(
-    track_test_dataset, num_replicas=world_size, rank=rank, shuffle=False
-)
 
-        track_test_loader = DataLoader(
-    dataset=track_test_dataset,
-    batch_size=1,
-    num_workers=opt.n_workers,
-    sampler=track_test_sampler,
-    pin_memory=True,
-    persistent_workers=True
-)
+        
+        if is_master:
+            track_train_loader = DataLoader(
+                dataset=track_train_dataset,
+                batch_size=1,
+                num_workers=opt.n_workers,
+                shuffle=False,
+                pin_memory=True,
+                persistent_workers=True
+            )
+            track_test_loader = DataLoader(
+                dataset=track_test_dataset,
+                batch_size=1,
+                num_workers=opt.n_workers,
+                shuffle=False,
+                pin_memory=True,
+                persistent_workers=True
+            )
+        else:
+            track_train_loader = None
+            track_test_loader = None
+
+
 
         print("Pre-saving REAL images for tracking folders...")
         if rank == 0:
@@ -108,15 +106,17 @@ if __name__ == '__main__':
         
         # Function to un-normalize and save
         def presave_real_images(loader, base_dir):
-            for _, target, _, name in tqdm(loader, desc=f"Pre-saving REALs in {os.path.basename(base_dir)}"):
-                img_name = name[0] # Get filename string
+            iterator = tqdm(loader, desc=f"Pre-saving REALs in {os.path.basename(base_dir)}") if is_master else loader
+            for _, target, _, name in iterator:
+                img_name = name[0]  # Get filename string
                 track_image_dir = os.path.join(base_dir, img_name)
                 os.makedirs(track_image_dir, exist_ok=True)
-                
+
                 real_image_path = os.path.join(track_image_dir, f"_REAL_{img_name}.png")
-                
-                if not os.path.exists(real_image_path):                    
-                    temp_manager.save_image(target, path=real_image_path)
+                if not os.path.exists(real_image_path):
+                    if temp_manager:
+                        temp_manager.save_image(target, path=real_image_path)
+
         
         with torch.no_grad():
             if temp_manager:
@@ -226,8 +226,8 @@ if __name__ == '__main__':
             G.eval()
             test_image_dir = os.path.join(opt.full_test_dir, str(step_to_validate)) 
             os.makedirs(test_image_dir, exist_ok=True)
-            
-            with torch.no_grad():
+            if is_master:
+                with torch.no_grad():
                     for input, target, _, name in tqdm(test_data_loader, desc=f"Rerunning Val @ {step_to_validate}"):
                         input, target = input.to(device=device, dtype=dtype), target.to(device, dtype=dtype)
                         fake = G(input) 
@@ -248,7 +248,7 @@ if __name__ == '__main__':
     start_time = datetime.datetime.now()
     for epoch in range(init_epoch, opt.n_epochs + 1):
         train_sampler.set_epoch(epoch)   
-
+        train_iterator = tqdm(data_loader, desc=f"Train Epoch {epoch}") if is_master else data_loader
         for batch_index,(input, target, _, _) in enumerate(tqdm(data_loader)):
             G.train()
             current_step += 1 
@@ -287,24 +287,28 @@ if __name__ == '__main__':
                            'generated_tensor': generated_tensor.detach()}
                 
             package.update(custom_losses)
-            if world_size > 1:
-                dist.barrier()
-            if manager:
-                manager(package)
+            is_last_batch = (batch_index == len(data_loader) - 1)
+            if is_last_batch:
+                        if world_size > 1:
+                            dist.barrier()
+                        if manager:
+                            manager(package)
 
 
             # --- FULL_TEST (Runs every 'save_freq' steps) ---
-        if world_size > 1: dist.barrier()
-        if opt.val_during_train:
+        
+        if opt.val_during_train and is_master:
+                    if world_size > 1: dist.barrier()
                     G.eval()
-                    if is_master: print(f"\n--- Running Full Test for Epoch {epoch} ---")
+                    print(f"\n--- Running Full Test for Epoch {epoch} ---")
                     
                     # The base directory (opt.full_test_dir) is set in options.py
                     step_test_image_dir = os.path.join(opt.full_test_dir, str(current_step))
                     os.makedirs(step_test_image_dir, exist_ok=True)
 
                     with torch.no_grad():
-                        for input, target, _, name in tqdm(test_data_loader, desc=f"Running Full Test @ {epoch} Epoch"): 
+                        test_iterator = tqdm(test_data_loader, desc=f"Full Test @ Epoch {epoch}") if is_master else test_data_loader
+                        for input, target, _, name in test_iterator: 
                             input, target = input.to(device=device, dtype=dtype), target.to(device, dtype=dtype)
                             fake = G(input)
 
@@ -317,36 +321,34 @@ if __name__ == '__main__':
                                 manager.save_image(target, path=os.path.join(step_test_image_dir, 'Check_{:d}_'.format(current_step)+ name[0] + '_real.png'))
                         
                     G.train() 
-                    if is_master: print("--- Full Test Complete ---")
+                    print("--- Full Test Complete ---")
 
         if opt.val_during_train:
             G.eval()
             if is_master: print(f"\n--- Running Epoch {epoch} Tracking ---")
 
-            # Helper function for un-normalizing fake images
-
-
             with torch.no_grad():
                 # 1. RUN Track_Train
-                for input, _, _, name in tqdm(track_train_loader, desc=f"Tracking Train @ Epoch {epoch}"): 
-                    input = input.to(device=device, dtype=dtype)
-                    fake = G(input) 
-                    
-                    img_name = name[0]
-                    save_path = os.path.join(opt.track_train_dir, img_name, f'{epoch:04d}_fake.png')
-                    if manager:
-                        manager.save_image(fake, path=save_path)
+                if is_master:
+                    for input, _, _, name in tqdm(track_train_loader, desc=f"Tracking Train @ Epoch {epoch}"): 
+                        input = input.to(device=device, dtype=dtype)
+                        fake = G(input) 
+                        
+                        img_name = name[0]
+                        save_path = os.path.join(opt.track_train_dir, img_name, f'{epoch:04d}_fake.png')
+                        if manager:
+                            manager.save_image(fake, path=save_path)
 
-                # 2. RUN Track_Test
-                for input, _, _, name in tqdm(track_test_loader, desc=f"Tracking Test @ Epoch {epoch}"): 
-                    input = input.to(device=device, dtype=dtype)
-                    fake = G(input) 
-                    
-                    img_name = name[0] # Get filename string
-                    # Save to the image-specific folder, named by epoch
-                    save_path = os.path.join(opt.track_test_dir, img_name, f'{epoch:04d}_fake.png')
-                    if manager:
-                        manager.save_image(fake, path=save_path)
+                    # 2. RUN Track_Test
+                    for input, _, _, name in tqdm(track_test_loader, desc=f"Tracking Test @ Epoch {epoch}"): 
+                        input = input.to(device=device, dtype=dtype)
+                        fake = G(input) 
+                        
+                        img_name = name[0] # Get filename string
+                        # Save to the image-specific folder, named by epoch
+                        save_path = os.path.join(opt.track_test_dir, img_name, f'{epoch:04d}_fake.png')
+                        if manager:
+                            manager.save_image(fake, path=save_path)
             
             G.train()
             
