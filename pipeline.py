@@ -1,16 +1,16 @@
 import os
 from astropy.io import fits
-from os.path import split, splitext, join, exists
+from os.path import split, splitext, join
 from glob import glob
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from scipy.ndimage import rotate
 from random import randint
-
+import torchvision.transforms.functional as TF
+from torchvision.transforms import InterpolationMode
 
 class CustomDataset(Dataset):
-    def __init__(self, opt,mode=None):
+    def __init__(self, opt, mode=None):
         super(CustomDataset, self).__init__()
         self.opt = opt
         dataset_dir = os.path.join(opt.data_root, opt.dataset_name)
@@ -20,184 +20,95 @@ class CustomDataset(Dataset):
         if mode is None:
             mode = 'Train' if opt.is_train else 'Test'
         
-        if mode == 'Train':
-            folder_name = 'Train'
-        elif mode == 'Test':
-            folder_name = 'Test'
-        elif mode == 'Track_Train':
-            folder_name = 'Track_Train'
-        elif mode == 'Track_Test':
-            folder_name = 'Track_Test'
-        else:
-            raise ValueError(f"Unknown dataset mode: {mode}")
+        # Folder selection logic
+        if mode == 'Train': folder_name = 'Train'
+        elif mode == 'Test': folder_name = 'Test'
+        elif mode == 'Track_Train': folder_name = 'Track_Train'
+        elif mode == 'Track_Test': folder_name = 'Track_Test'
+        else: raise ValueError(f"Unknown dataset mode: {mode}")
 
         self.label_path_list = sorted(glob(os.path.join(dataset_dir, folder_name, 'input', '*.' + self.input_format)))
-
 
     def __get_target_path(self, input_path):
         input_filename = split(input_path)[-1]
         name_without_ext = splitext(input_filename)[0]
         parts = name_without_ext.split('_')
-        if len(parts) > 1:
-            unique_id = '_'.join(parts[1:]) 
-        else:
-            unique_id = name_without_ext 
+        if len(parts) > 1: unique_id = '_'.join(parts[1:]) 
+        else: unique_id = name_without_ext 
 
-        # 3. Construct the target filename (e.g., HMI_2011-01-01_00Z.fits)
         target_filename = f"HMI_{unique_id}.{self.target_format}"
-
-        # 4. Construct the full target path.
-        # Find the parent folder of 'input' (which is 'Train' or 'Test')
         parent_dir = os.path.dirname(os.path.dirname(input_path)) 
-        
-        # Join with the 'target' subfolder
-        target_path = join(parent_dir, 'target', target_filename)
-        
-        return target_path
+        return join(parent_dir, 'target', target_filename)
 
     def __getitem__(self, index):
+        # 1. Setup Paths
+        label_path = self.label_path_list[index]
+        target_path = self.__get_target_path(label_path)
         
-        # [ Training data ] ==============================================================================================
+        # 2. Define Augmentation Parameters (Calculate once to apply to both Input & Target)
+        angle = 0
+        pad = 0
+        i, j, h, w = 0, 0, 1024, 1024 # Default crop params
+        
         if self.opt.is_train:
-            # Get the path for the input image
-            label_path = self.label_path_list[index]
-            
-            # Use dynamic method to find the corresponding target path
-            target_path = self.__get_target_path(label_path)
-            
-            # --- Augmentation setup (Restored) ---
-            self.angle = randint(-self.opt.max_rotation_angle, self.opt.max_rotation_angle)
+            angle = randint(-self.opt.max_rotation_angle, self.opt.max_rotation_angle)
+            pad = self.opt.padding_size
+            # Calculate random crop coordinates
+            # Assuming image size increases by 2*pad after padding
+            # If original is 1024, padded is 1024 + 2*pad. 
+            # We want to crop back to 1024.
+            max_offset = 2 * pad if pad > 0 else 0
+            i = randint(0, max_offset) # Top
+            j = randint(0, max_offset) # Left
 
-            self.offset_x = randint(0, 2 * self.opt.padding_size - 1) if self.opt.padding_size > 0 else 0
-            self.offset_y = randint(0, 2 * self.opt.padding_size - 1) if self.opt.padding_size > 0 else 0
-            
-            # [ Input ] ==================================================================================================
-            if self.input_format in ["fits", "fts"]:
-                IMG_A0 = np.array(fits.open(label_path)[0].data) # Removed .transpose(2, 0 ,1)
-            elif self.input_format in ["npy"]:
-                IMG_A0 = np.load(label_path, allow_pickle=True) # Removed .transpose(2, 0 ,1)
+        # [ Helper to Load & Process ] -------------------------------------------------
+        def process_image(path, format, is_mask=False):
+            # A. FAST READ
+            if format in ["fits", "fts"]:
+                # memmap=False loads directly to RAM, faster for training
+                # astype(float32) handles endianness conversion automatically
+                arr = fits.getdata(path, memmap=False).astype(np.float32)
+            elif format == "npy":
+                arr = np.load(path, allow_pickle=True).astype(np.float32)
             else:
-                raise NotImplementedError("Please check data_format_input option. It has to be fits or npy.")
-                
-            IMG_A0[np.isnan(IMG_A0)] = 0
-            
-            label_array = self.__rotate(IMG_A0)
-            label_array = self.__pad(label_array, self.opt.padding_size)
-            label_array = self.__random_crop(label_array)
-            label_array = np.ascontiguousarray(label_array, dtype=np.float32)
-            
-            label_tensor = torch.tensor(label_array, dtype=torch.float32)
+                raise NotImplementedError(f"Unknown format: {format}")
 
-            if len(label_tensor.shape) == 2:
-                label_tensor = label_tensor.unsqueeze(dim=0)
-            
-                
-            # [ Target ] ==================================================================================================
-            
-            if self.target_format in ["fits", "fts"]:
-                IMG_B0 = np.array(fits.open(target_path)[0].data)
-            elif self.target_format in ["npy"]:
-                IMG_B0 = np.load(target_path, allow_pickle=True)
-            else:
-                raise NotImplementedError("Please check data_format_target option. It has to be fits or npy.")
-                
-            IMG_B0[np.isnan(IMG_B0)] = 0
-            
-            target_array = self.__rotate(IMG_B0)
-            target_array = self.__pad(target_array, self.opt.padding_size)
-            target_array = self.__random_crop(target_array)
-            target_array = np.ascontiguousarray(target_array, dtype=np.float32)
-            
-            target_tensor = torch.tensor(target_array, dtype=torch.float32)
+            # Handle NaNs
+            arr = np.nan_to_num(arr, nan=0.0)
 
-            if len(target_tensor.shape) == 2:
-                target_tensor = target_tensor.unsqueeze(dim=0)  # Add channel dimension.
+            # B. TO TENSOR (Instant conversion)
+            tensor = torch.from_numpy(arr)
             
-            
-        # [ Test data ] ===================================================================================================
-        else:
-            # Get paths
-            label_path = self.label_path_list[index]
-            target_path = self.__get_target_path(label_path) # <--- ADDED: Must get target path for validation
-            
-            # [ Input ] ==================================================================================================
-            # Load and process Input
-            if self.input_format in ["fits", "fts"]:                    
-                IMG_A0 = np.array(fits.open(label_path)[0].data)
-            elif self.input_format in ["npy"]:
-                IMG_A0 = np.load(label_path, allow_pickle=True)
-            else:
-                raise NotImplementedError("Please check data_format_input option. It has to be fits or npy.")
-                
-            IMG_A0[np.isnan(IMG_A0)] = 0
-            IMG_A0 = np.ascontiguousarray(IMG_A0, dtype=np.float32) # From previous fix
-            label_tensor = torch.tensor(IMG_A0, dtype=torch.float32)
-            
-            if len(label_tensor.shape) == 2:
-                label_tensor = label_tensor.unsqueeze(dim=0)
-                
-            # [ Target (for Validation/Real comparison) ] ================================================================
-            # <--- ADDED: Load and process Target
-            if self.target_format in ["fits", "fts"]:
-                IMG_B0 = np.array(fits.open(target_path)[0].data)
-            elif self.target_format in ["npy"]:
-                IMG_B0 = np.load(target_path, allow_pickle=True)
-            else:
-                raise NotImplementedError("Please check data_format_target option. It has to be fits or npy.")
+            # Ensure (C, H, W)
+            if tensor.ndim == 2:
+                tensor = tensor.unsqueeze(0)
 
-            IMG_B0[np.isnan(IMG_B0)] = 0
-            IMG_B0 = np.ascontiguousarray(IMG_B0, dtype=np.float32) # From previous fix
+            # C. AUGMENTATION (Native Tensor Operations)
+            # 1. Rotate
+            if angle != 0:
+                # Bilinear is smoother for data; Nearest is better if you had discrete classes (but you use floats)
+                tensor = TF.rotate(tensor, angle, interpolation=InterpolationMode.BILINEAR)
             
-            target_tensor = torch.tensor(IMG_B0, dtype=torch.float32)
-
-            if len(target_tensor.shape) == 2:
-                target_tensor = target_tensor.unsqueeze(dim=0)
+            # 2. Pad
+            if pad > 0:
+                tensor = TF.pad(tensor, pad, fill=0)
             
-            # --- RETURN 4 ITEMS FOR VALIDATION LOOP ---
-            input_name = splitext(split(label_path)[-1])[0]
-            target_name = splitext(split(target_path)[-1])[0]
+            # 3. Crop
+            if self.opt.is_train:
+                # crop(tensor, top, left, height, width)
+                tensor = TF.crop(tensor, i, j, h, w)
+            
+            return tensor
 
-            # Return the four expected items: input, target, input_name (as '_'), target_name (as 'name')
-            return label_tensor, target_tensor, input_name, target_name
+        # [ Execute ] ------------------------------------------------------------------
+        input_tensor = process_image(label_path, self.input_format)
+        target_tensor = process_image(target_path, self.target_format)
+
+        # [ Return ] -------------------------------------------------------------------
+        input_name = splitext(split(label_path)[-1])[0]
+        target_name = splitext(split(target_path)[-1])[0]
         
-        # For train, return input, target, and their filenames
-        return label_tensor, target_tensor, splitext(split(label_path)[-1])[0], \
-                   splitext(split(target_path)[-1])[0]
-                   
-    def __random_crop(self, x):
-        x = np.array(x)
-        # Assuming data dimensions are (H, W) or (C, H, W).
-        # We crop the last two dimensions.
-        if len(x.shape) == 3:
-            # Cropping (C, H, W)
-            x = x[:, self.offset_x: self.offset_x + 1024, self.offset_y: self.offset_y + 1024]
-        else:
-            # Cropping (H, W)
-            x = x[self.offset_x: self.offset_x + 1024, self.offset_y: self.offset_y + 1024]
-            
-        return x
-
-    @staticmethod
-    def __pad(x, padding_size):
-        if type(padding_size) == int:
-            if len(x.shape) == 3:
-                # Padding (C, H, W) only pads H and W dimensions
-                padding_size= ((0, 0), (padding_size, padding_size), (padding_size, padding_size))
-            else:
-                # Padding (H, W)
-                padding_size = ((padding_size, padding_size), (padding_size, padding_size))
-        return np.pad(x, pad_width=padding_size, mode="constant", constant_values=0)
-
-    def __rotate(self, x):
-        # If the array is 3D (C, H, W), rotate axes 1 and 2 (H and W).
-        if len(x.shape) == 3:
-            return rotate(x, self.angle, axes=(1, 2), reshape=False)
-        # If 2D (H, W), rotate default axes.
-        return rotate(x, self.angle, reshape=False)
-
-    @staticmethod
-    def __to_numpy(x):
-        return np.array(x, dtype=np.float32)
+        return input_tensor, target_tensor, input_name, target_name
 
     def __len__(self):
         return len(self.label_path_list)
