@@ -294,8 +294,8 @@ if __name__ == '__main__':
 
 
             # --- FULL_TEST (Runs every 'save_freq' steps) ---
-            if world_size > 1: dist.barrier()
-            if opt.val_during_train:
+        if world_size > 1: dist.barrier()
+        if opt.val_during_train:
                     G.eval()
                     if is_master: print(f"\n--- Running Full Test for Epoch {epoch} ---")
                     
