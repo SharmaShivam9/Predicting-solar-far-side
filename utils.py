@@ -129,22 +129,54 @@ class Manager(object):
             f.write(','.join(log_data) + '\n')
 
     def tensor2image(self, image_tensor):
-        """
-        Converts a normalized PyTorch tensor (range [-1, 1]) to an 8-bit NumPy image (range [0, 255]).
-        This replaces the complex adjust_dynamic_range logic for simplicity.
-        """
-        np_image = image_tensor.squeeze().cpu().float().numpy()
+        t = image_tensor
 
-        if len(np_image.shape) == 3:
-            np_image = np.transpose(np_image, (1, 2, 0))  # Convert C, H, W to H, W, C
-        
+    # If it's a torch Tensor object, operate on it; otherwise convert
+        if isinstance(t, torch.Tensor):
+        # If batched, take the first sample
+            if t.dim() == 4:
+                t = t[0]
+            t = t.detach().cpu().float()
+            np_image = t.numpy()
+        else:
+        # Already a numpy array
+            np_image = np.array(t, dtype=np.float32)
+
+    # Now np_image is either (C,H,W) or (H,W)
+        if np_image.ndim == 3:
+        # (C, H, W) -> (H, W, C)
+            np_image = np.transpose(np_image, (1, 2, 0))
+
+        # If channel dim is 1, squeeze to (H, W)
+            if np_image.shape[2] == 1:
+                np_image = np_image[:, :, 0]
+
+    # If single channel (H,W) nothing to transpose
+
+    # Scale from [-1, 1] -> [0, 255]. If values not in that range it's still clipped.
         np_image = (np_image + 1.0) / 2.0 * 255.0
-        
-        np_image = np.clip(np_image, 0, 255).astype(np.uint8)
+
+    # Clip and convert to uint8. Use astype with copy to ensure contiguity & correct dtype.
+        np_image = np.clip(np_image, 0, 255).astype('uint8').copy()
+
         return np_image
 
     def save_image(self, image_tensor, path):
-        Image.fromarray(self.tensor2image(image_tensor)).save(path, self.opt.image_mode)
+    
+        np_img = self.tensor2image(image_tensor)
+
+    # PIL expects 2D (H,W) or 3D (H,W,3) or (H,W,4). For single-channel ensure mode 'L'.
+        try:
+            img = Image.fromarray(np_img)
+        except Exception as e:
+        # As a last-resort, convert grayscale to uint8 2D explicitly
+            if np_img.ndim == 3 and np_img.shape[2] == 1:
+                img = Image.fromarray(np_img[:, :, 0])
+            else:
+                raise
+
+        img.save(path, self.opt.image_mode)
+
 
     def save(self, package, image=False, model=False):
         if image:
