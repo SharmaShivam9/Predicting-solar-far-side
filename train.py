@@ -60,7 +60,7 @@ if __name__ == '__main__':
         if is_master:
             test_data_loader = DataLoader(
                 dataset=test_dataset,
-                batch_size=test_opt.batch_size,
+                batch_size=1,
                 num_workers=opt.n_workers,
                 shuffle=False,
                 pin_memory=True,
@@ -217,30 +217,6 @@ if __name__ == '__main__':
     # ----------------------------------------------------------------------------------
 
     manager = Manager(opt, current_step) if is_master else None
-    
-    if opt.val_during_train and current_step > 0:
-        if current_step % save_freq == 0:
-            step_to_validate = current_step
-            print(f"\nResumed at step {step_to_validate}. Rerunning validation for crash recovery.")
-            
-            G.eval()
-            test_image_dir = os.path.join(opt.full_test_dir, str(step_to_validate)) 
-            os.makedirs(test_image_dir, exist_ok=True)
-            if is_master:
-                with torch.no_grad():
-                    for input, target, _, name in tqdm(test_data_loader, desc=f"Rerunning Val @ {step_to_validate}"):
-                        input, target = input.to(device=device, dtype=dtype), target.to(device, dtype=dtype)
-                        fake = G(input) 
-
-                        if len(fake.shape) == 2:
-                            fake = fake.unsqueeze(0)
-                        if len(target.shape) == 2:
-                            target = target.unsqueeze(0)
-                        if manager:
-                            manager.save_image(fake, path=os.path.join(test_image_dir, 'Check_{:d}_'.format(step_to_validate)+ name[0] + '_fake.png'))
-                            manager.save_image(target, path=os.path.join(test_image_dir, 'Check_{:d}_'.format(step_to_validate)+ name[0] + '_real.png'))
-            
-            G.train()
     # --------------------------------------------------------------------------
 
 
@@ -297,14 +273,15 @@ if __name__ == '__main__':
             # --- FULL_TEST (Runs every 'save_freq' steps) ---
         if world_size > 1: dist.barrier()
         if manager: manager(package)
-
-        if opt.val_during_train and is_master:
+        FULL_TEST_INTERVAL =30
+        if opt.val_during_train and is_master and (epoch % FULL_TEST_INTERVAL == 0):
+                    manager.save(package, model=True)
                     G.eval()
                     print(f"\n--- Running Full Test for Epoch {epoch} ---")
                     
                     # The base directory (opt.full_test_dir) is set in options.py
-                    step_test_image_dir = os.path.join(opt.full_test_dir, str(current_step))
-                    os.makedirs(step_test_image_dir, exist_ok=True)
+                    epoch_test_dir = os.path.join(opt.full_test_dir, f"epoch_{epoch}")
+                    os.makedirs(epoch_test_dir, exist_ok=True)
 
                     with torch.no_grad():
                         test_iterator = tqdm(test_data_loader, desc=f"Full Test @ Epoch {epoch}") if is_master else test_data_loader
@@ -317,8 +294,8 @@ if __name__ == '__main__':
                             if len(target.shape) == 2: target = target.unsqueeze(0)
                             # --- End Un-normalization ---
                             if manager:
-                                manager.save_image(fake, path=os.path.join(step_test_image_dir, 'Check_{:d}_'.format(current_step)+ name[0] + '_fake.png'))
-                                manager.save_image(target, path=os.path.join(step_test_image_dir, 'Check_{:d}_'.format(current_step)+ name[0] + '_real.png'))
+                                manager.save_image(fake, os.path.join(epoch_test_dir, f"{name[0]}_fake.png"))
+                                manager.save_image(target, os.path.join(epoch_test_dir, f"{name[0]}_real.png"))
                         
                     G.train() 
                     print("--- Full Test Complete ---")
@@ -364,8 +341,8 @@ if __name__ == '__main__':
         'Epoch': opt.n_epochs,
         'current_step': current_step,
         'total_step': total_step,
-        'D_state_dict': D.state_dict(),
-        'G_state_dict': G.state_dict(),
+        'D_state_dict': get_state_dict(D),
+        'G_state_dict': get_state_dict(G),
         'D_optim_state_dict': D_optim.state_dict(),
         'G_optim_state_dict': G_optim.state_dict(),
         'G_scheduler_state_dict': G_scheduler.state_dict(),

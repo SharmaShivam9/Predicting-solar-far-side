@@ -50,7 +50,7 @@ class Manager(object):
         self.opt = opt
         self.log_path = os.path.join(self.opt.model_dir, 'loss_log.csv')
         self.loss_keys = ['Epoch', 'current_step', 'D_loss', 'G_loss',
-                          'L_adv', 'L_fm_weighted', 'L_pil_total', 'L_rec',
+                          'L_adv', 'L_fm_weighted', 'L_custom_total', 'L_rec',
                           'L_bg', 'L_nz']
         
         file_exists = os.path.exists(self.log_path)
@@ -186,14 +186,29 @@ class Manager(object):
             self.save_image(package['generated_tensor'], path_fake)
 
         elif model:
-            path_pt = os.path.join(self.opt.model_dir, str(package['current_step']) + '_' + 'dict.pt')
+            epoch = int(package.get('Epoch', 0))
+
+            if epoch > 0:
+                filename = f"model_epoch{epoch}.pt"
+            else:
+                filename = f"{package.get('current_step', 0)}_dict.pt"
+
+            path_pt = os.path.join(self.opt.model_dir, filename)
             torch.save(package, path_pt)
             path_latest = os.path.join(self.opt.model_dir, 'latest_dict.pt')
             torch.save(package, path_latest)
-            checkpoint_list = [f for f in os.listdir(self.opt.model_dir) if f.endswith('_dict.pt') and f != 'latest_dict.pt']
-            checkpoint_list_sorted = sorted(checkpoint_list,key=lambda x: int(x.split('_')[0]))
-            while len(checkpoint_list_sorted) > 5:
-                old_ckpt = checkpoint_list_sorted.pop(0)
+
+            all_ckpts = [f for f in os.listdir(self.opt.model_dir) if f.startswith('model_epoch') and f.endswith('.pt')]
+            def _epoch_num(fname):
+                try:
+                    return int(fname.replace('model_epoch', '').replace('.pt', ''))
+                except Exception:
+                    return 0
+            all_ckpts_sorted = sorted(all_ckpts, key=_epoch_num)
+
+
+            while len(all_ckpts_sorted) > 5:
+                old_ckpt = all_ckpts_sorted.pop(0)
                 try:
                     os.remove(os.path.join(self.opt.model_dir, old_ckpt))
                     print(f"Deleted old checkpoint: {old_ckpt}")
@@ -208,9 +223,6 @@ class Manager(object):
             self.log_loss(package)
 
         if package['current_step'] % self.opt.save_freq == 0:
-            # NOTE: synchronization must be done by the training script (train.py)
-            # because Manager is only instantiated on rank 0. Do not call dist.barrier()
-            # here — that would deadlock.
             self.save(package, model=True)
 
 
