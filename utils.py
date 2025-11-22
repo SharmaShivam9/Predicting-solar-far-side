@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 from PIL import Image
+import torch.distributed as dist
+
 
 def get_grid(input, is_real=True):
     if is_real:
@@ -155,25 +157,15 @@ class Manager(object):
             torch.save(package, path_pt)
             path_latest = os.path.join(self.opt.model_dir, 'latest_dict.pt')
             torch.save(package, path_latest)
-            checkpoint_list = [
-        f for f in os.listdir(self.opt.model_dir)
-        if f.endswith('_dict.pt') and f != 'latest_dict.pt'
-    ]
-
-    # Sort numerically by step number
-        checkpoint_list_sorted = sorted(
-        checkpoint_list,
-        key=lambda x: int(x.split('_')[0])        # "1234_dict.pt" → 1234
-    )
-
-    # Remove older ones if > 5 exist
-        while len(checkpoint_list_sorted) > 5:
-            old_ckpt = checkpoint_list_sorted.pop(0)
-            try:
-                os.remove(os.path.join(self.opt.model_dir, old_ckpt))
-                print(f"Deleted old checkpoint: {old_ckpt}")
-            except Exception as e:
-                print(f"Could not delete {old_ckpt}: {e}")
+            checkpoint_list = [f for f in os.listdir(self.opt.model_dir) if f.endswith('_dict.pt') and f != 'latest_dict.pt']
+            checkpoint_list_sorted = sorted(checkpoint_list,key=lambda x: int(x.split('_')[0]))
+            while len(checkpoint_list_sorted) > 5:
+                old_ckpt = checkpoint_list_sorted.pop(0)
+                try:
+                    os.remove(os.path.join(self.opt.model_dir, old_ckpt))
+                    print(f"Deleted old checkpoint: {old_ckpt}")
+                except Exception as e:
+                    print(f"Could not delete {old_ckpt}: {e}")
 
 
 
@@ -183,7 +175,9 @@ class Manager(object):
             self.log_loss(package)
 
         if package['current_step'] % self.opt.save_freq == 0:
+            dist.barrier()  # synchronize all ranks before saving
             self.save(package, model=True)
+
 
 
 def weights_init(module):
