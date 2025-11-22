@@ -294,16 +294,17 @@ if __name__ == '__main__':
 
 
             # --- FULL_TEST (Runs every 'save_freq' steps) ---
-            if opt.val_during_train and (current_step % save_freq == 0):
+            if world_size > 1: dist.barrier()
+            if opt.val_during_train:
                     G.eval()
-                    print(f"\n--- Running Full Test for Step {current_step} ---")
+                    if is_master: print(f"\n--- Running Full Test for Epoch {epoch} ---")
                     
                     # The base directory (opt.full_test_dir) is set in options.py
                     step_test_image_dir = os.path.join(opt.full_test_dir, str(current_step))
                     os.makedirs(step_test_image_dir, exist_ok=True)
 
                     with torch.no_grad():
-                        for input, target, _, name in tqdm(test_data_loader, desc=f"Running Full Test @ {current_step}"): 
+                        for input, target, _, name in tqdm(test_data_loader, desc=f"Running Full Test @ {epoch} Epoch"): 
                             input, target = input.to(device=device, dtype=dtype), target.to(device, dtype=dtype)
                             fake = G(input)
 
@@ -316,11 +317,11 @@ if __name__ == '__main__':
                                 manager.save_image(target, path=os.path.join(step_test_image_dir, 'Check_{:d}_'.format(current_step)+ name[0] + '_real.png'))
                         
                     G.train() 
-                    print("--- Full Test Complete ---")
+                    if is_master: print("--- Full Test Complete ---")
 
         if opt.val_during_train:
             G.eval()
-            print(f"\n--- Running Epoch {epoch} Tracking ---")
+            if is_master: print(f"\n--- Running Epoch {epoch} Tracking ---")
 
             # Helper function for un-normalizing fake images
 
@@ -349,7 +350,7 @@ if __name__ == '__main__':
             
             G.train()
             
-            print("--- Epoch Tracking Complete ---")
+            if is_master: print("--- Epoch Tracking Complete ---")
       
 
 
