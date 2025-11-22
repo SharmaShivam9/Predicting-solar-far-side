@@ -248,8 +248,8 @@ if __name__ == '__main__':
     start_time = datetime.datetime.now()
     for epoch in range(init_epoch, opt.n_epochs + 1):
         train_sampler.set_epoch(epoch)   
-        train_iterator = tqdm(data_loader, desc=f"Train Epoch {epoch}") if is_master else data_loader
-        for batch_index,(input, target, _, _) in enumerate(tqdm(data_loader)):
+        train_iterator = tqdm(data_loader, desc=f"Train Epoch {epoch}", disable=(not is_master))
+        for batch_index,(input, target, _, _) in enumerate(train_iterator):
             G.train()
             current_step += 1 
             
@@ -287,18 +287,18 @@ if __name__ == '__main__':
                            'generated_tensor': generated_tensor.detach()}
                 
             package.update(custom_losses)
-            is_last_batch = (batch_index == len(data_loader) - 1)
-            if is_last_batch:
-                        if world_size > 1:
-                            dist.barrier()
-                        if manager:
-                            manager(package)
+        if is_master:
+            try:
+                train_iterator.close()
+            except Exception:
+                pass
 
 
             # --- FULL_TEST (Runs every 'save_freq' steps) ---
-        
+        if world_size > 1: dist.barrier()
+        if manager: manager(package)
+
         if opt.val_during_train and is_master:
-                    if world_size > 1: dist.barrier()
                     G.eval()
                     print(f"\n--- Running Full Test for Epoch {epoch} ---")
                     
@@ -323,13 +323,11 @@ if __name__ == '__main__':
                     G.train() 
                     print("--- Full Test Complete ---")
 
-        if opt.val_during_train:
+        if opt.val_during_train and is_master:
             G.eval()
             if is_master: print(f"\n--- Running Epoch {epoch} Tracking ---")
 
             with torch.no_grad():
-                # 1. RUN Track_Train
-                if is_master:
                     for input, _, _, name in tqdm(track_train_loader, desc=f"Tracking Train @ Epoch {epoch}"): 
                         input = input.to(device=device, dtype=dtype)
                         fake = G(input) 
@@ -373,7 +371,7 @@ if __name__ == '__main__':
         'G_scheduler_state_dict': G_scheduler.state_dict(),
         'D_scheduler_state_dict': D_scheduler.state_dict()
     }
-    
-    print(f"\nSaving final model to: {final_save_path}")
-    torch.save(final_package, final_save_path)
-    print("Training completed and final model saved successfully!")
+    if is_master:
+        print(f"\nSaving final model to: {final_save_path}")
+        torch.save(final_package, final_save_path)
+        print("Training completed and final model saved successfully!")
