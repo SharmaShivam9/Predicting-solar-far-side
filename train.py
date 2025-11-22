@@ -276,9 +276,7 @@ if __name__ == '__main__':
         FULL_TEST_INTERVAL =30
         if opt.val_during_train and is_master and (epoch % FULL_TEST_INTERVAL == 0):
                     manager.save(package, model=True)
-                    G.eval()
-                    print(f"\n--- Running Full Test for Epoch {epoch} ---")
-                    
+                    G.eval()                    
                     # The base directory (opt.full_test_dir) is set in options.py
                     epoch_test_dir = os.path.join(opt.full_test_dir, f"epoch_{epoch}")
                     os.makedirs(epoch_test_dir, exist_ok=True)
@@ -298,11 +296,9 @@ if __name__ == '__main__':
                                 manager.save_image(target, os.path.join(epoch_test_dir, f"{name[0]}_real.png"))
                         
                     G.train() 
-                    print("--- Full Test Complete ---")
 
         if opt.val_during_train and is_master:
             G.eval()
-            if is_master: print(f"\n--- Running Epoch {epoch} Tracking ---")
 
             with torch.no_grad():
                     for input, _, _, name in tqdm(track_train_loader, desc=f"Tracking Train @ Epoch {epoch}"): 
@@ -325,10 +321,7 @@ if __name__ == '__main__':
                         if manager:
                             manager.save_image(fake, path=save_path)
             
-            G.train()
-            
-            if is_master: print("--- Epoch Tracking Complete ---")
-      
+            G.train()      
 
 
         G_scheduler.step() 
