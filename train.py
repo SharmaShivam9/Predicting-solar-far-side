@@ -186,8 +186,15 @@ if __name__ == '__main__':
         init_epoch = pt_file['Epoch']
         print(f"Resume at epoch: {init_epoch} from file: {os.path.basename(resume_path)}")
         
-        G.load_state_dict(pt_file['G_state_dict'])
-        D.load_state_dict(pt_file['D_state_dict'])
+        if hasattr(G, "module"):
+            G.module.load_state_dict(pt_file['G_state_dict'])
+        else:
+            G.load_state_dict(pt_file['G_state_dict'])
+
+        if hasattr(D, "module"):
+            D.module.load_state_dict(pt_file['D_state_dict'])
+        else:
+            D.load_state_dict(pt_file['D_state_dict'])
         
         G_optim.load_state_dict(pt_file['G_optim_state_dict'])
         D_optim.load_state_dict(pt_file['D_optim_state_dict'])
@@ -280,7 +287,10 @@ if __name__ == '__main__':
                            'generated_tensor': generated_tensor.detach()}
                 
             package.update(custom_losses)
-            if manager: manager(package)
+            if world_size > 1:
+                dist.barrier()
+            if manager:
+                manager(package)
 
 
             # --- FULL_TEST (Runs every 'save_freq' steps) ---

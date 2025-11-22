@@ -94,7 +94,7 @@ class Discriminator(nn.Module):
 class Loss(object):
     def __init__(self, opt):
         self.opt = opt
-        self.device = torch.device('cuda:0' if opt.gpu_ids != -1 and torch.cuda.is_available() else 'cpu')
+        self.device =None
 
         self.criterion = nn.MSELoss()
         self.FMcriterion = nn.L1Loss()
@@ -124,8 +124,8 @@ class Loss(object):
 
         for i in range(self.n_D):
             # D_loss uses the ORIGINAL (non-detached) real features
-            real_grid = get_grid(real_features[i][-1], is_real=True).to(self.device)
-            fake_grid = get_grid(fake_features_D[i][-1], is_real=False).to(self.device)
+            real_grid = get_grid(real_features[i][-1], is_real=True)
+            fake_grid = get_grid(fake_features_D[i][-1], is_real=False)
 
             # MSE Loss for D: Real should be 1, Fake should be 0
             loss_D += (self.criterion(real_features[i][-1], real_grid) +
@@ -137,7 +137,7 @@ class Loss(object):
         # --- A. ADVERSARIAL LOSS (G should fool D -> target 1.0) ---
         loss_G_adv = 0.0 # Use loss_G_adv instead of loss_G
         for i in range(self.n_D):
-            real_grid = get_grid(fake_features_G[i][-1], is_real=True).to(self.device)
+            real_grid = get_grid(fake_features_G[i][-1], is_real=True)
             loss_G_adv += self.criterion(fake_features_G[i][-1], real_grid)
             
             # --- B. FEATURE MATCHING (FM) LOSS ---

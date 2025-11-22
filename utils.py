@@ -8,13 +8,14 @@ import torch.distributed as dist
 
 
 def get_grid(input, is_real=True):
+    # Create tensor ON THE SAME DEVICE as the input
+    device = input.device
     if is_real:
-        grid = torch.FloatTensor(input.shape).fill_(1.0)
-
-    elif not is_real:
-        grid = torch.FloatTensor(input.shape).fill_(0.0)
-
+        grid = torch.ones_like(input, device=device)
+    else:
+        grid = torch.zeros_like(input, device=device)
     return grid
+
 
 
 def get_norm_layer(type):
@@ -175,8 +176,11 @@ class Manager(object):
             self.log_loss(package)
 
         if package['current_step'] % self.opt.save_freq == 0:
-            dist.barrier()  # synchronize all ranks before saving
+            # NOTE: synchronization must be done by the training script (train.py)
+            # because Manager is only instantiated on rank 0. Do not call dist.barrier()
+            # here — that would deadlock.
             self.save(package, model=True)
+
 
 
 
