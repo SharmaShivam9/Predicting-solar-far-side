@@ -20,7 +20,7 @@ class CustomDataset(Dataset):
         if mode is None:
             mode = 'Train' if opt.is_train else 'Test'
         
-        # Folder selection logic
+        # Select folder
         if mode == 'Train': folder_name = 'Train'
         elif mode == 'Test': folder_name = 'Test'
         elif mode == 'Track_Train': folder_name = 'Track_Train'
@@ -33,9 +33,7 @@ class CustomDataset(Dataset):
         input_filename = split(input_path)[-1]
         name_without_ext = splitext(input_filename)[0]
         parts = name_without_ext.split('_')
-        if len(parts) > 1: unique_id = '_'.join(parts[1:]) 
-        else: unique_id = name_without_ext 
-
+        unique_id = '_'.join(parts[1:]) if len(parts) > 1 else name_without_ext 
         target_filename = f"HMI_{unique_id}.{self.target_format}"
         parent_dir = os.path.dirname(os.path.dirname(input_path)) 
         return join(parent_dir, 'target', target_filename)
@@ -45,70 +43,61 @@ class CustomDataset(Dataset):
         label_path = self.label_path_list[index]
         target_path = self.__get_target_path(label_path)
         
-        # 2. Define Augmentation Parameters (Calculate once to apply to both Input & Target)
+        # 2. Define Augmentation Params (Computed once, applied to both)
         angle = 0
         pad = 0
-        i, j, h, w = 0, 0, 1024, 1024 # Default crop params
+        i, j, h, w = 0, 0, 1024, 1024
         
         if self.opt.is_train:
             angle = randint(-self.opt.max_rotation_angle, self.opt.max_rotation_angle)
             pad = self.opt.padding_size
-            # Calculate random crop coordinates
-            # Assuming image size increases by 2*pad after padding
-            # If original is 1024, padded is 1024 + 2*pad. 
-            # We want to crop back to 1024.
-            max_offset = 2 * pad if pad > 0 else 0
-            i = randint(0, max_offset) # Top
-            j = randint(0, max_offset) # Left
+            if pad > 0:
+                # If we pad, we pick a random crop to return to original size
+                max_offset = 2 * pad
+                i = randint(0, max_offset)
+                j = randint(0, max_offset)
 
-        # [ Helper to Load & Process ] -------------------------------------------------
-        def process_image(path, format, is_mask=False):
-            # A. FAST READ
+        # --- HELPER FUNCTION ---
+        def load_and_process(path, format, is_input):
+            # A. LOAD TO MEMORY
             if format in ["fits", "fts"]:
-                # memmap=False loads directly to RAM, faster for training
-                # astype(float32) handles endianness conversion automatically
+                # memmap=False forces a read to RAM (faster for training).
+                # astype(float32) handles the Big-Endian to Little-Endian conversion.
                 arr = fits.getdata(path, memmap=False).astype(np.float32)
             elif format == "npy":
                 arr = np.load(path, allow_pickle=True).astype(np.float32)
-            else:
-                raise NotImplementedError(f"Unknown format: {format}")
-
-            # Handle NaNs
+            
             arr = np.nan_to_num(arr, nan=0.0)
 
-            # B. TO TENSOR (Instant conversion)
-            tensor = torch.from_numpy(arr)
+            # B. TO TENSOR (SAFE COPY)
+            # Use torch.tensor() not from_numpy() to ensure contiguous memory and avoid the DDP crash.
+            tensor = torch.tensor(arr, dtype=torch.float32)
+
+            # C. SHAPE CORRECTION (PyTorch needs [Channels, H, W])
+            # If your fits is saved as [H, W, Channels] (pixel-last), we permute it.
+            if tensor.ndim == 3 and tensor.shape[2] <= 4: 
+                 tensor = tensor.permute(2, 0, 1) # [1024,1024,4] -> [4,1024,1024]
             
-            # Ensure (C, H, W)
+            # If data is [H, W] (2D), make it [1, H, W]
             if tensor.ndim == 2:
                 tensor = tensor.unsqueeze(0)
 
-            # C. AUGMENTATION (Native Tensor Operations)
-            # 1. Rotate
+            # D. AUGMENTATION (TF.rotate handles multi-channel [4, H, W] correctly)
             if angle != 0:
-                # Bilinear is smoother for data; Nearest is better if you had discrete classes (but you use floats)
                 tensor = TF.rotate(tensor, angle, interpolation=InterpolationMode.BILINEAR)
             
-            # 2. Pad
             if pad > 0:
                 tensor = TF.pad(tensor, pad, fill=0)
-            
-            # 3. Crop
-            if self.opt.is_train:
-                # crop(tensor, top, left, height, width)
-                tensor = TF.crop(tensor, i, j, h, w)
+                if self.opt.is_train:
+                    tensor = TF.crop(tensor, i, j, h, w)
             
             return tensor
 
-        # [ Execute ] ------------------------------------------------------------------
-        input_tensor = process_image(label_path, self.input_format)
-        target_tensor = process_image(target_path, self.target_format)
+        # --- EXECUTE ---
+        input_tensor = load_and_process(label_path, self.input_format, is_input=True)
+        target_tensor = load_and_process(target_path, self.target_format, is_input=False)
 
-        # [ Return ] -------------------------------------------------------------------
-        input_name = splitext(split(label_path)[-1])[0]
-        target_name = splitext(split(target_path)[-1])[0]
-        
-        return input_tensor, target_tensor, input_name, target_name
+        return input_tensor, target_tensor, splitext(split(label_path)[-1])[0], splitext(split(target_path)[-1])[0]
 
     def __len__(self):
         return len(self.label_path_list)
