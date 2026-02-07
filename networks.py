@@ -159,33 +159,16 @@ class Loss(object):
     
 
     def _calculate_custom_loss(self, input, target, generated):
-        N, C, H, W = target.shape
-
-		# --- UN-NORMALIZE to Physical Units (Gauss) on float32 tensors ---
-        UpIB = self.opt.saturation_upper_limit_target
-        LoIB = self.opt.saturation_lower_limit_target
-		
-        Range = UpIB - LoIB
-        Offset = (UpIB + LoIB) / 2.0
-		
-        B_gen_gauss = generated * (Range / 2.0) + Offset
-        B_target_gauss = target * (Range / 2.0) + Offset 
-
         mask = input[:, 3:4, :, :]
       
-        mask_squeezed = mask.squeeze(1)
         
         sun_pixel_count = mask.sum() + 1e-8 # 
         L_rec = (torch.abs(generated- target) * mask).sum() / sun_pixel_count
         L_rec_loss = self.CUSTOM_LAMBDAS.get('L_rec', 0.0) * L_rec
 		
-		# --- Prepare data for Custom calculations ---
-        B_gen = B_gen_gauss.squeeze(1) # [N, H, W]
-        B_norm_gen = B_gen / self.opt.SATURATION_GAUSS 
 		
-        # --- 3. ACTIVE ANTI-COLLAPSE PENALTIES ---
+        B_norm_gen = generated.squeeze()
 		
-		# L_bg: Geometric Background Enforcement Loss 
         background_mask = 1.0 - mask # Shape [N, 1, H, W]
         background_pixel_count = background_mask.sum()
         NEAR_ZERO_BG_THRESHOLD = self.opt.FINAL_THRESHOLDS['L_bg']
@@ -194,28 +177,14 @@ class Loss(object):
         L_bg_loss = B_norm_gen_magnitude[violating_bg_pixels_mask.squeeze(1)].sum() / background_pixel_count
         L_bg_penalty = self.CUSTOM_LAMBDAS.get('L_bg', 0.0) * L_bg_loss
 
-        
-		# L_nz: Anti-Zero Enforcement Loss (Correctly uses the dynamic input mask)
-        L_nz_lambda = self.CUSTOM_LAMBDAS.get('L_nz', 0.0)
-        THRESHOLD_GAUSS = self.opt.FINAL_THRESHOLDS['L_nz'] # Define the threshold in Gauss
-        gen_magnitude = torch.abs(B_gen)
-        target_magnitude = torch.abs(B_target_gauss.squeeze(1))
-        gen_below_thresh = (gen_magnitude < THRESHOLD_GAUSS) & mask_squeezed.bool()
-        target_above_thresh = (target_magnitude >= THRESHOLD_GAUSS) & mask_squeezed.bool()
-        error_pixels_mask = gen_below_thresh & target_above_thresh
-        L_nz_loss = error_pixels_mask.sum() / sun_pixel_count
-        L_nz_penalty = L_nz_lambda * L_nz_loss
-				  
-        L_custom_total= L_rec_loss + L_bg_penalty + L_nz_penalty
+        L_custom_total= L_rec_loss + L_bg_penalty
 		
         custom_losses = {
 			'L_rec': L_rec_loss.mean().detach().item(), 
 			'L_bg': L_bg_penalty.detach().item(),
-			'L_nz': L_nz_penalty.detach().item(),
 			'L_custom_total': L_custom_total.mean().detach().item(), 
 		}
 
-		# Return the float16 version of the total loss
         return L_custom_total, custom_losses
     
 class ResidualBlock(nn.Module):

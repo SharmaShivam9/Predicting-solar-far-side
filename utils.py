@@ -107,8 +107,8 @@ class Manager(object):
             print("  [GEN] Adv: {:.{prec}} | FM (Weighted): {:.{prec}} | Custom Total: {:.{prec}}".
                   format(package['L_adv'], package['L_fm_weighted'], package['L_custom_total'], prec=prec))
         if 'L_rec' in package:
-            print("  [Losses] Rec: {:.{prec}} | L_BG: {:.{prec}} | L_NZ: {:.{prec}}".
-          format(package['L_rec'], package['L_bg'], package['L_nz'], prec=prec))
+            print("  [Losses] Rec: {:.{prec}} | L_BG: {:.{prec}} ".
+          format(package['L_rec'], package['L_bg'], prec=prec))
         
     
     def log_loss(self, package):
