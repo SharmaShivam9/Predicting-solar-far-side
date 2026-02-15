@@ -3,7 +3,7 @@ import torch.nn as nn
 import numpy as np
 from utils import get_grid, get_norm_layer, get_pad_layer
 
-
+#this is new line
 class Generator(nn.Module):
     def __init__(self, opt):
         super(Generator, self).__init__()
